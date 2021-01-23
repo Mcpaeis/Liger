@@ -1,0 +1,70 @@
+---
+title: "Tripletloss-Comparison-21-01-2021"
+author: "Sixtus Dakurah"
+date: "1/21/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(tidyverse)
+```
+
+```{r}
+# load data
+liger_data <- read.csv("/Users/sixtusdakurah/Desktop/liger/data/tpl_embedded_liger.csv")
+liger_data$source<- rep("Liger", dim(liger_data)[1])
+head(liger_data)
+neumf_data <- read.csv("/Users/sixtusdakurah/Desktop/liger/data/tpl_embedded.csv")
+neumf_data$source<- rep("Neumf", dim(neumf_data)[1])
+head(neumf_data)
+orig_data <- read.csv("/Users/sixtusdakurah/Desktop/liger/data/tpl_unembedded_merged_embedding.csv")
+orig_data$source<- rep("Original", dim(orig_data)[1])
+head(orig_data)
+```
+
+```{r}
+# stack the datasets
+merged_data <- rbind(liger_data, neumf_data, orig_data)
+head(merged_data)
+```
+```{r}
+reshaped_data <- reshape(merged_data, direction = "long", 
+                         varying = c("error", "pos_error", "neg_error"), 
+                         timevar = "var", 
+                         times = c("aggregate", "positive", "negative"),
+                         v.names = "loss",
+                         idvar = c("cell", "source"))
+```
+
+```{r}
+ggplot(data = reshaped_data, mapping = aes(x = var, y = loss, fill = source)) + geom_boxplot(outlier.size = 0)
+```
+
+```{r}
+head(reshaped_data)
+```
+
+```{r}
+summ <- reshaped_data %>% group_by(source, var) %>% summarize(n = n(), sum = sum(loss), ave = mean(loss), sd = sd(loss))
+summ
+```
+
+```{r}
+library(xtable)
+xtable(summ)
+```
+
+
+```{r}
+original_clusters <- read.csv("/Users/sixtusdakurah/Desktop/liger/clusters.csv") #head(original_clusters)
+#head(original_clusters)
+grp <- original_clusters[original_clusters$X=="Myeloid_1835", ]$x 
+
+"TGACCAGAGGATTC" %in% original_clusters[original_clusters$x==grp, ]$X
+```
+
+
+
+

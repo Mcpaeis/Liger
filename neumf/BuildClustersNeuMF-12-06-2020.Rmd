@@ -1,0 +1,182 @@
+---
+title: "BuildClustersNeuMF"
+author: "Sixtus Dakurah"
+date: "12/6/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(liger)
+library(Matrix)
+library(patchwork)
+```
+
+```{r load-data}
+RDS_from_web <- function(url) {
+
+  tempFile_location<- tempfile()
+  download.file(url, tempFile_location)
+  b <- readRDS(tempFile_location)
+  file.remove(tempFile_location)
+  b
+}
+
+# load data: PBMC - Peripheral Blood Mononuclear Cell, both control and stimulated set
+#ctrl_dge <- read.table("pbmc_alignment/pbmc_SeqWell.expressionMatrix.txt") # original PBMC data
+#stim_dge <- read.table("pbmc_alignment/pbmc_10X.expressionMatrix.txt") # original PBMC data
+ctrl_dge <- read_csv("pbmc_SqW.csv")
+stim_dge <- read_csv("pbmc_10X.csv")
+```
+  
+```{r}
+ctrl_dge_1 <- read_csv("data/eSqWdense-11-29-2020.csv") # dense representation from NeuMF
+stim_dge_1 <- read_csv("data/e10Xdense-11-29-2020.csv") # dense representation from NeuMF
+```
+
+```{r}
+head(ctrl_dge)
+head(stim_dge)
+head(ctrl_dge_1)
+tail(stim_dge_1)
+```
+
+```{r}
+# this is genes by cells
+dim(ctrl_dge)
+dim(stim_dge)
+
+# this is cells by genes
+dim(ctrl_dge_1)
+dim(stim_dge_1)
+```
+
+```{r}
+ctrl_dge_ = ctrl_dge_1
+stim_dge_ = stim_dge_1
+
+# option 1 convert negative occurences to 0
+ctrl_dge_[ctrl_dge_ < 0] = 0
+stim_dge_[stim_dge_ < 0] = 0
+```
+
+
+```{r}
+library(data.table)
+# transpose the neumf dataframe and remove the X-column
+drops <- c("X1")
+ctrl_dge_t1 <- (ctrl_dge_[ , !(names(ctrl_dge_) %in% drops)])#[-c(ncol(ctrl_dge_)-1), ] # this removes the last row as well
+stim_dge_t1 <- (stim_dge_[ , !(names(stim_dge_) %in% drops)])#[-c(ncol(stim_dge_)-1), ]
+
+ctrl_dge_t1_1 <- transpose(ctrl_dge_t1)
+stim_dge_t1_1 <- transpose(stim_dge_t1)
+```
+
+```{r}
+dim(ctrl_dge_t1_1)
+dim(stim_dge_t1_1)
+ctrl_dge_t1_1 <- ctrl_dge_t1_1[-c(32739), ]
+stim_dge_t1_1 <- stim_dge_t1_1[-c(32739), ]
+```
+
+
+```{r}
+# this is genes by cells
+dim(ctrl_dge)
+dim(stim_dge)
+
+# this is cells by genes
+dim(ctrl_dge_t1_1)
+dim(stim_dge_t1_1)
+```
+
+
+
+```{r}
+
+rownames(ctrl_dge_t1_1) <-  stim_dge$X1 # assign the gene names as row names... this is from stim
+
+ctrl_dge <- data.frame(ctrl_dge)
+rownames(ctrl_dge) <- ctrl_dge$X1 # ctrl is less, use it;s genes
+#ctrl_dge1 <- ctrl_dge[, -1] # remove the gene index
+ctrl_dge1 <- (ctrl_dge[ , !(names(ctrl_dge) %in% drops)])
+
+rownames(stim_dge_t1_1) <- stim_dge$X1 # assign the gene names as row names
+#stim_dge1 <- stim_dge[, -1] # remove the gene index
+
+stim_dge <- data.frame(stim_dge)
+rownames(stim_dge) <- stim_dge$X1
+stim_dge1 <- (stim_dge[ , !(names(stim_dge) %in% drops)])
+
+head(ctrl_dge_t1_1)
+head(stim_dge_t1_1)
+head(ctrl_dge1)
+head(stim_dge1)
+```
+
+
+You don't really need to run liger on the dense representation!
+
+
+## Create Liger Object and Select Genes
+
+```{r create-liger-objects}
+ifnb_liger <- createLiger(list(ctrl = ctrl_dge1, stim = stim_dge1))
+```
+
+## Normalize and scale
+
+```{r normalize-scale}
+# normalize and scale
+ifnb_liger <- normalize(ifnb_liger)
+ifnb_liger <- selectGenes(ifnb_liger, do.plot = T, var.thresh = c(0.3, 0.875))
+ifnb_liger <- scaleNotCenter(ifnb_liger)
+
+```
+
+
+## Perform Matrix Factorization
+
+```{r matrix-factorization}
+# joint factorization
+ifnb_liger <- optimizeALS(ifnb_liger, k = 20)
+```
+
+
+## Normalize and Align Data
+
+```{r warning=FALSE}
+# quatile normalize
+ifnb_liger <- quantile_norm(ifnb_liger)
+ifnb_liger <- louvainCluster(ifnb_liger, resolution = 0.25)
+```
+
+```{r}
+print(paste("Agreement for Original Expressions: ", round(calcAgreement(ifnb_liger, ndims = 20, k = 20)*100, 2), "%", sep=''))
+```
+
+```{r}
+# visualizations
+ifnb_liger <- runUMAP(ifnb_liger, distance = 'euclidean', n_neighbors = 10, min_dist = 0.1)
+all.plots <- plotByDatasetAndCluster(ifnb_liger, axis.labels = c('UMAP 1', 'UMAP 2'), return.plots = T)
+all.plots
+```
+
+
+
+```{r}
+print(paste("Alignment for Original Expressions: ", round(calcAlignment(ifnb_liger)*100, 2), "%", sep=''))
+```
+
+```{r}
+slotNames(ifnb_liger)
+```
+
+```{r}
+H1<- ((ifnb_liger@H)[[1]])
+H2<- ((ifnb_liger@H)[[2]])
+write.csv(H1, file = "data/H1-Liger.csv")
+write.csv(H2, file = "data/H2-Liger.csv")
+```
+

@@ -1,0 +1,233 @@
+---
+title: "Metrics-11-29-2020"
+author: "Sixtus Dakurah"
+date: "11/29/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+ctrl_dge_t <- read.table("/Users/sixtusdakurah/Desktop/Liger/data/pbmc_10X.txt")
+stim_dge_t <- read.table("/Users/sixtusdakurah/Desktop/liger/data/pbmc_SeqWell.txt")
+#ctrl_dge_t <- read_csv("pbmc_SqW.csv")
+#stim_dge_t <- read_csv("pbmc_10X.csv")
+head(ctrl_dge_t)
+head(stim_dge_t)
+```
+
+
+## Triplet Loss
+
+$$Loss = \sum_i^N \left[ ||f(c_i^a) - f(c_i^p)||_2^2 - ||f(c_i^a) - f(c_i^n)||_2^2 \right]_+$$
+### Procedure
+
+(1) Each cell $c_i$ is an anchor cell denoted as $c_i^a$.
+
+(2) Select a hard positive $c_i^p$ - a cell in the same cluster as $c_i^a$, also select a hard negative $c_i^n$.
+
+(3) Obtain the embeddings of the three cells from their right H matrices.
+
+(4) Compute the loss.
+
+
+Do this just for a sample of 10 cells from liger and neumf. 
+(Make sure the anchor cells are the same in both cases - for the entire cells, this is not necessary).
+
+
+
+```{r}
+# load the cluster data
+original_clusters <- read.csv("/Users/sixtusdakurah/Desktop/Liger/clusters.csv") #head(original_clusters)
+# don't really need this
+#liger_clusters <- read.csv("clusters-liger.csv") #head(liger_clusters)
+#neumf_clusters <- read.csv("clusters-neumf.csv") #neumf clusters
+
+# load the H-matrices from liger -- don't really need them
+H1_Liger = read.csv("/Users/sixtusdakurah/Desktop/Liger/data/H1-Liger.csv")
+H2_Liger = read.csv("/Users/sixtusdakurah/Desktop/Liger/data/H2-Liger.csv")
+
+# load the H-matrices from neumf
+H1_NeuMF = read.csv("/Users/sixtusdakurah/Desktop/Liger/data/H2-01-02-2021.csv") # NAMES ARE SWITCHED SOMEHOW
+H2_NeuMF = read.csv("/Users/sixtusdakurah/Desktop/Liger/data/H1-01-02-2021.csv")
+```
+
+
+```{r}
+head(original_clusters)
+head(H1_Liger)
+head(H2_Liger)
+head(H1_NeuMF)
+(H2_NeuMF)
+```
+
+```{r}
+dim(H1_Liger)
+dim(H2_Liger)
+dim(H1_NeuMF)
+dim(H2_NeuMF)
+```
+
+
+```{r}
+# option 1 convert negative occurences to 0
+H1_NeuMF[H1_NeuMF < 0] = 0
+H2_NeuMF[H2_NeuMF < 0] = 0
+
+H1_NeuMF1 <- H1_NeuMF
+H2_NeuMF1 <- H2_NeuMF
+# remobve the last row
+H1_NeuMF1 <- H1_NeuMF[-c(3695), ]
+H2_NeuMF1 <- H2_NeuMF[-c(2639), ]
+# add the cell names
+H1_NeuMF1$X <- H1_Liger$X
+H2_NeuMF1$X <- H2_Liger$X
+```
+
+```{r}
+head(H1_NeuMF1)
+head(H2_NeuMF1)
+```
+
+
+
+# The cell names in one of the datasets does not correspond to the cluster cells.
+
+# Doing the implementation for H2 in liger and neumf
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+computeError <- function(a, p, n) {
+  
+  val  = sum( (a-p)^2 )  - sum( (a - n)^2 )
+  return(max(val, 0))
+}
+```
+
+
+
+```{r}
+computeTripletLoss <- function(embedding, clusters){
+
+  anchor_pos <- clusters %>% filter(x=="B cells")
+  hard_neg <- clusters %>% filter(x!="B cells")
+  hard_neg_cells <- hard_neg$X
+  
+  cells <- embedding$X
+  
+  # this loss variable should be inside
+  loss = 0
+  
+  for (cell in cells){
+    # pick a hard positive
+    hard_positive <- (sample_n(anchor_pos[anchor_pos$X!=cell, ], 1))$X
+    # pick a hard negative
+    neg_found = 0
+    while (neg_found < 1) {
+      hard_negative <- (sample_n(embedding[embedding$X!=cell, ], 1))$X
+      if (hard_negative %in% hard_neg_cells) {neg_found = 2}
+    }
+    
+    #now get the vectors associated with these cells
+    anchor_vec <- embedding[embedding$X==cell, ]
+    pos_vec <- embedding[embedding$X==hard_positive, ]
+    neg_vec <- embedding[embedding$X==hard_negative, ]
+    
+    # compute the square loss
+    error <- computeError(anchor_vec[-c(1)], pos_vec[-c(1)], neg_vec[-c(1)]) 
+    
+    loss = loss + error
+    #print(loss)
+  }
+
+  #print(paste("loss:", loss))
+  return(loss)
+}
+```
+
+
+```{r}
+iter_loss1 <- rep(0, 100)
+iter_loss2 <- rep(1, 100)
+index<- c(1:100)
+for (k in 1:100){
+  iter_loss1[k] <- computeTripletLoss(H2_Liger, original_clusters) 
+  iter_loss2[k] <- computeTripletLoss(H2_NeuMF1, original_clusters) 
+}
+df <- data.frame(iter_loss1)
+df$iter_loss2 <- iter_loss2
+df$index <- index
+
+ggplot(data = df) + 
+  geom_line(aes(x = index, y = iter_loss1, color = "Liger")) + 
+  geom_line(aes(x = index, y = iter_loss2, color = "NeuMF")) + 
+  scale_color_manual(breaks = c("Liger", "NeuMF"),
+                      values = c("green", "blue"))+
+  geom_hline( yintercept = mean(iter_loss1), color = "green") + 
+  geom_hline(yintercept = mean(iter_loss2), color = "blue")+
+  ylab("Loss")
+```
+
+```{r}
+summary(df)
+```
+
+```{r}
+clusters <- original_clusters
+
+anchor_pos <- clusters %>% filter(x=="B cells")
+  hard_neg <- clusters %>% filter(x!="B cells")
+  hard_neg_cells <- hard_neg$X
+  
+  cells <- stim_dge_t$X1
+  
+  loss = 0
+  
+  for (cell in cells[1:50]){
+    # pick a hard positive
+    hard_positive <- (sample_n(anchor_pos[anchor_pos$X!=cell, ], 1))$X
+    # pick a hard negative
+    neg_found = 0
+    while (neg_found < 1) {
+      hard_negative <- (sample_n(stim_dge_t[stim_dge_t$X1!=cell, ], 1))$X1
+      if (hard_negative %in% hard_neg_cells) {neg_found = 2}
+    }
+    
+    #now get the vectors associated with these cells
+    anchor_vec <- stim_dge_t[stim_dge_t$X1==cell, ]
+    pos_vec <- stim_dge_t[stim_dge_t$X1==hard_positive, ]
+    neg_vec <- stim_dge_t[stim_dge_t$X1==hard_negative, ]
+    
+    # compute the square loss
+    error <- computeError(anchor_vec[-c(1)], pos_vec[-c(1)], neg_vec[-c(1)]) 
+    
+    loss = loss + error
+    #print(loss)
+  }
+
+  #print(paste("loss:", loss))
+  return(loss)
+```
+
+
+
+
+## F1 - Score
+
+$$F_1 = \frac{TP}{TP + \frac{1}{2}(FP + FN)}$$
+
+### Procedure
+
+(1) Denote the true cell clusters by TC
+
+(2) Extract Liger cell clusters (LC) and neumf cell clusters (NC)
+
+(3) For each cell (c), get it's neighbors in TC (NTC) as well as in LC (NLC) and NC (NNC). 
+
+This procedure does not seem to be making sense.
